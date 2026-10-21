@@ -15,6 +15,7 @@ Titanis is a library of protocol implementations and command line utilities, wri
 		* Tested with Windows Server 2008 and Windows Server 2025
 		* Supports both MS-ZIP and Xpress compression
 		* Supports replication of individual objects or entire partitions
+		* Secretsdump-compatible output format (`-SecretsDump`) with optional single-user targeting (`-JustDcUser`)
 	* EFS ([MS-EFSR](https://winprotocoldocs-bhdugrdyduf5h2e4.b02.azurefd.net/MS-EFSR/%5bMS-EFSR%5d.pdf))
 	* LSA ([MS-LSAD](https://winprotocoldocs-bhdugrdyduf5h2e4.b02.azurefd.net/MS-LSAD/%5bMS-LSAD%5d.pdf) and [MS-LSAT](https://winprotocoldocs-bhdugrdyduf5h2e4.b02.azurefd.net/MS-LSAT/%5bMS-LSAT%5d.pdf))
 	* Remote Registry ([MS-RRP](https://winprotocoldoc.z19.web.core.windows.net/MS-RRP/%5bMS-RRP%5d.pdf))
@@ -58,6 +59,29 @@ For an overview on supported authentication scenarios, see [Authentication](docs
 The toolset implements callbacks and logging features to integrate into your operational environment.
 
 For a list of command line tools and tasks you can perform with them, check the [Tool Index](docs/UserGuide/tools/index.md)
+
+## DCSync with Secretsdump Output
+
+The `Dsrep rep` command supports a `-SecretsDump` flag that outputs replicated credentials in the same format as Impacket's secretsdump.py (`domain\user:rid:lmhash:nthash:::`).
+
+Dump all domain user and computer account hashes:
+```
+Dsrep rep -UserName <user> -UserDomain <domain.fqdn> -Password <pass> <DC> -SecretsDump
+```
+
+Dump a single user (similar to secretsdump's `-just-dc-user`):
+```
+Dsrep rep -UserName <user> -UserDomain <domain.fqdn> -Password <pass> <DC> -SecretsDump -JustDcUser Administrator
+```
+
+Example output:
+```
+contoso.local\Administrator:500:aad3b435b51404eeaad3b435b51404ee:a94e5c55d3b65705496781e68001cca1:::
+contoso.local\krbtgt:502:aad3b435b51404eeaad3b435b51404ee:e0a04f94299c6d13e5f35304b31d5792:::
+contoso.local\svc_sql:1108:aad3b435b51404eeaad3b435b51404ee:2e79d1adaed10b1d87a42d64c5acd09e:::
+```
+
+The `-UserDomain` value is used as the domain prefix in the output, so pass the FQDN (e.g. `contoso.local`) to match secretsdump conventions.
 
 # Target Audience
 *  **Security researchers** - Research how Windows reacts to various types of requests

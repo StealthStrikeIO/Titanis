@@ -12,7 +12,7 @@ To build Titanis:
 
 To build Titanis, you'll need to install the following prerequisites:
 
-* .NET 8 SDK 
+* .NET 9 SDK (or later; .NET 8 SDK works for most projects but the source generators require C# 13 / .NET 9+)
 	* [Installation instructions for Linux](https://learn.microsoft.com/en-us/dotnet/core/install/linux)
 	* [Installation instructions for Windows](https://learn.microsoft.com/en-us/dotnet/core/install/windows)
 
@@ -22,7 +22,19 @@ After cloning the Titanis source code into a directory, open a terminal (or Comm
 and change to the directory containing the source code.  Then issue the following command:
 
 ```
-dotnet build
+dotnet build Titanis.sln
+```
+
+If you encounter errors related to doc generation or warnings treated as errors, use:
+
+```
+dotnet build Titanis.sln -p:WarningsAsErrors="" -p:ArtifactsBasePath=""
+```
+
+To build a single tool (e.g., Dsrep):
+
+```
+dotnet build tools/rpc/Dsrep/Dsrep.csproj -p:WarningsAsErrors=""
 ```
 
 # Visual Studio 2022

@@ -21,16 +21,28 @@ public class ReplicateObjectsCommand : ReplicateCommand
 
 	protected override int GetDegreeOfParallelism() => this.Parallelize;
 
-	protected sealed override ExtendedOpRequest GetExop() => ExtendedOpRequest.ReplObject;
+	private bool UseNcReplication => this.SecretsDump.IsSet && this.ObjectName.IsNullOrEmpty();
+
+	protected sealed override ExtendedOpRequest GetExop() =>
+		UseNcReplication ? 0 : ExtendedOpRequest.ReplObject;
 
 	protected override async IAsyncEnumerable<DsName> GetObjectNames(CancellationToken cancellationToken)
 	{
-		LdapClient? ldapClient = null;
+		if (UseNcReplication)
+		{
+			var ldapClient = await LdapClient.Connect(new DnsEndPoint(this.CurrentServerName, 389), null, this.RequireService<ISocketService>(), this.RequireService<IClientCredentialService>(), cancellationToken);
+			yield return new DsName(Guid.Empty, null, ldapClient.DomainRoot);
+			yield break;
+		}
+
+		LdapClient? ldapSearch = null;
 		var objSpecs = this.ObjectName;
+
 		if (objSpecs.IsNullOrEmpty())
 		{
 			objSpecs = [new DsobjSpec(LdapFilter.Parse("(objectClass=*)"))];
 		}
+
 		foreach (var objSpec in objSpecs)
 		{
 			var objName = objSpec.Dsname;
@@ -40,18 +52,28 @@ public class ReplicateObjectsCommand : ReplicateCommand
 			}
 			else
 			{
-				ldapClient ??= await LdapClient.Connect(new DnsEndPoint(this.CurrentServerName, 389), null, this.RequireService<ISocketService>(), this.RequireService<IClientCredentialService>(), cancellationToken);
+				ldapSearch ??= await LdapClient.Connect(new DnsEndPoint(this.CurrentServerName, 389), null, this.RequireService<ISocketService>(), this.RequireService<IClientCredentialService>(), cancellationToken);
 
 				var filter = objSpec.Filter ?? LdapFilter.Parse($"(samAccountName={objSpec.Name})");
-				LdapQuery query = new(ldapClient.DomainRoot, LdapSearchScope.Subtree, filter, [])
+				LdapQuery query = new(ldapSearch.DomainRoot, LdapSearchScope.Subtree, filter, [])
 				{
 					PageSize = 20,
 					Options = LdapQueryOptions.AllPages
 				};
 
-				var results = await ldapClient.Search(query, cancellationToken);
+				var results = await ldapSearch.Search(query, cancellationToken);
 				if (results.EntryCount == 0)
+				{
 					this.WriteWarning($"The object specification '{objSpec?.ToString()}' did not return any results");
+				}
+				else
+				{
+					foreach (var entry in results.Entries)
+					{
+						if (entry.EntryName is not null)
+							yield return new DsName(Guid.Empty, null, entry.EntryName);
+					}
+				}
 			}
 		}
 	}

