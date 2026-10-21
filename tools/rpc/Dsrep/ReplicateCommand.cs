@@ -272,7 +272,7 @@ public abstract class ReplicateCommand : DsbindCommand, IDrsChangeCallback
 
 		var sidObj = entry[LdapAttributeTypes.ObjectSid]?.Value;
 		uint rid = 0;
-		string domain = this._domainNetbios ?? "UNKNOWN";
+		string domain = GetDomainFromDn(entry.EntryName) ?? this._domainNetbios ?? "UNKNOWN";
 		if (sidObj is SecurityIdentifier sid)
 		{
 			rid = sid.Rid;
@@ -286,6 +286,16 @@ public abstract class ReplicateCommand : DsbindCommand, IDrsChangeCallback
 		string ntHash = ntBinary.Bytes.ToHexString();
 
 		this.Context.WriteOutputLine($"{domain}\\{samAccountName}:{rid}:{lmHash}:{ntHash}:::");
+	}
+
+	private static string? GetDomainFromDn(LdapDistinguishedName? dn)
+	{
+		if (dn is null) return null;
+		var dcComponents = dn.Rdns
+			.Where(r => r.Type.Equals("DC", StringComparison.OrdinalIgnoreCase))
+			.Select(r => r.Values[0]);
+		var fqdn = string.Join(".", dcComponents);
+		return fqdn.Length > 0 ? fqdn : null;
 	}
 
 	async Task IDrsChangeCallback.OnError(DsName objectName, Exception exception)
